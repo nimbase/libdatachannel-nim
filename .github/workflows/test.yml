@@ -4,13 +4,11 @@ on:
     paths-ignore:
       - LICENSE
       - README.*
-      - examples
       - .github/workflows
   pull_request:
     paths-ignore:
       - LICENSE
       - README.*
-      - examples
       - .github/workflows
 env:
   mainfile: src/libdatachannel
@@ -18,15 +16,51 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         nim-version:
           - 'stable'
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
+      - name: Install libdatachannel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake git \
+            libssl-dev libsrtp2-dev
+
+      - name: Build and install libdatachannel
+        run: |
+          git clone --depth 1 --branch v0.24.6 \
+            https://github.com/paullouisageneau/libdatachannel.git
+          cmake -S libdatachannel -B libdatachannel/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_GTEST=OFF \
+            -DBUILD_SHARED_LIBS=ON
+          cmake --build libdatachannel/build --parallel
+          sudo cmake --install libdatachannel/build
+          echo "LD_LIBRARY_PATH=/usr/local/lib" >> "$GITHUB_ENV"
+
       - uses: jiro4989/setup-nim-action@v1
         with:
           nim-version: ${{ matrix.nim-version }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - run: nimble install -Y
-      - run: nim c -r ${{ env.mainfile }}.nim
-      - run: nimble test
+
+      # The high-level API runs Nim code on threads the Nim runtime did not
+      # create, which ARC handles and ORC does not. See the README.
+      - name: Compile the library
+        run: nim c --mm:arc --path:src ${{ env.mainfile }}.nim
+
+      - name: Run the tests
+        run: |
+          for test in tests/test_*.nim; do
+            echo "::group::$test"
+            nim c --mm:arc --path:src -r "$test"
+            echo "::endgroup::"
+          done
+
+      - name: Build the examples
+        run: nimble examples
