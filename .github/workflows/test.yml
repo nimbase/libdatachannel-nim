@@ -4,63 +4,85 @@ on:
     paths-ignore:
       - LICENSE
       - README.*
-      - .github/workflows
   pull_request:
     paths-ignore:
       - LICENSE
       - README.*
-      - .github/workflows
-env:
-  mainfile: src/libdatachannel
 jobs:
   test:
-    runs-on: ubuntu-latest
+    uses: nimbase/setup-nim-action/.github/workflows/test.yml@main
+    with:
+      nim-version: stable
+      os: '[{"os":"ubuntu-latest"},{"os":"macos-latest"}]'
+      # Build and install the native libdatachannel v0.24.6 that the
+      # bindings target. ARC needs no flag: tests/config.nims pins
+      # switch("mm", "arc"), which `nimble test` picks up on every OS.
+      pre-install-command: |
+        if [ "$RUNNER_OS" = "Linux" ]; then
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake git libssl-dev libsrtp2-dev
+          SYSTEM_LIBS=ON
+        else
+          command -v cmake >/dev/null || brew install cmake
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          export OPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          SYSTEM_LIBS=OFF
+        fi
+        git clone --depth 1 --recurse-submodules --branch v0.24.6 \
+          https://github.com/paullouisageneau/libdatachannel.git \
+          "$RUNNER_TEMP/libdatachannel"
+        cmake -S "$RUNNER_TEMP/libdatachannel" \
+          -B "$RUNNER_TEMP/libdatachannel/build" \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DUSE_GTEST=OFF \
+          -DBUILD_SHARED_LIBS=ON \
+          -DPREFER_SYSTEM_LIB="$SYSTEM_LIBS"
+        cmake --build "$RUNNER_TEMP/libdatachannel/build" --parallel
+        sudo cmake --install "$RUNNER_TEMP/libdatachannel/build"
+
+  examples:
+    needs: test
     strategy:
       fail-fast: false
       matrix:
-        nim-version:
-          - 'stable'
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install libdatachannel build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake git \
-            libssl-dev libsrtp2-dev
-
       - name: Build and install libdatachannel
         run: |
-          git clone --depth 1 --branch v0.24.6 \
-            https://github.com/paullouisageneau/libdatachannel.git
-          cmake -S libdatachannel -B libdatachannel/build \
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              build-essential cmake git libssl-dev libsrtp2-dev
+            SYSTEM_LIBS=ON
+          else
+            command -v cmake >/dev/null || brew install cmake
+            brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+            export OPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+            SYSTEM_LIBS=OFF
+          fi
+          git clone --depth 1 --recurse-submodules --branch v0.24.6 \
+            https://github.com/paullouisageneau/libdatachannel.git \
+            "$RUNNER_TEMP/libdatachannel"
+          cmake -S "$RUNNER_TEMP/libdatachannel" \
+            -B "$RUNNER_TEMP/libdatachannel/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DUSE_GTEST=OFF \
-            -DBUILD_SHARED_LIBS=ON
-          cmake --build libdatachannel/build --parallel
-          sudo cmake --install libdatachannel/build
-          echo "LD_LIBRARY_PATH=/usr/local/lib" >> "$GITHUB_ENV"
+            -DBUILD_SHARED_LIBS=ON \
+            -DPREFER_SYSTEM_LIB="$SYSTEM_LIBS"
+          cmake --build "$RUNNER_TEMP/libdatachannel/build" --parallel
+          sudo cmake --install "$RUNNER_TEMP/libdatachannel/build"
 
-      - uses: jiro4989/setup-nim-action@v1
+      - uses: nimbase/setup-nim-action@main
         with:
-          nim-version: ${{ matrix.nim-version }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          nim-version: stable
 
       - run: nimble install -Y
 
-      # The high-level API runs Nim code on threads the Nim runtime did not
-      # create, which ARC handles and ORC does not. See the README.
-      - name: Compile the library
-        run: nim c --mm:arc --path:src ${{ env.mainfile }}.nim
-
-      - name: Run the tests
-        run: |
-          for test in tests/test_*.nim; do
-            echo "::group::$test"
-            nim c --mm:arc --path:src -r "$test"
-            echo "::endgroup::"
-          done
-
+      # The nimble task already builds every example with --mm:arc,
+      # which the high-level API requires (see the README).
       - name: Build the examples
         run: nimble examples
