@@ -77,20 +77,21 @@ suite "websocket":
     let server = newWebSocketServer(WebSocketServerConfig(port: Port(0)))
     defer: server.close()
 
-    var clientPath = ""
-    var clientRemote = ""
+    var serverClient: WebSocketClient
     server.onClient = proc(client: WebSocketClient) =
-      # `onClient` fires before the handshake, `onOpen` right after it.
-      client.onOpen = proc() =
-        clientPath = client.path()
-        clientRemote = client.remoteAddress()
+      # `onClient` fires on TCP accept, before the handshake. The accepted
+      # client is captured instead of reading from its `onOpen`: server-side
+      # `onOpen` is fire-and-forget, so a loopback handshake that beats the
+      # callback setup loses the event for good. `path()` is polled below.
+      serverClient = client
 
     let client = newWebSocketClient(
       "ws://127.0.0.1:" & $server.port & "/chat")
     defer: client.close()
     check waitFor(proc(): bool = client.isOpen)
-    check waitFor(proc(): bool = clientPath == "/chat")
-    check clientRemote.len > 0
+    check waitFor(proc(): bool = serverClient != nil and
+      serverClient.path() == "/chat")
+    check serverClient.remoteAddress().len > 0
 
   test "a client that cannot connect reports an error":
     # Port 1 is reserved and nothing listens on it.

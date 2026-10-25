@@ -427,8 +427,11 @@ rtcSetMessageCallback(pc, myCdeclCallback)
   cycle, so as long as every channel is closed the memory is reclaimed.
 * **Memory manager.** Build with `--mm:arc` (or `--gc:refc`). Nim's default
   `--mm:orc` corrupts its heap when Nim code allocates from threads the Nim
-  runtime did not create, which is exactly what a WebRTC callback is. The test
-  suite runs with ARC for this reason.
+  runtime did not create, which is exactly what a WebRTC callback is. Under
+  ORC the test suite dies with `SIGSEGV: Illegal storage access`, so
+  `tests/config.nims` pins `switch("mm", "arc")` and both `clue test` and
+  `nim c --path:src -r tests/test_*.nim` pick it up automatically. An
+  explicit `--mm` on the command line still wins.
 
 ### ❤ Contributions & Support
 - 🐛 Found a bug? [Create a new Issue](https://github.com/openpeeps/libdatachannel-nim/issues)
