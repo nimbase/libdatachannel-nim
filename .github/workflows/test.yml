@@ -18,16 +18,16 @@ jobs:
       # bindings target. ARC needs no flag: tests/config.nims pins
       # switch("mm", "arc"), which `nimble test` picks up on every OS.
       pre-install-command: |
+        # Submodule mode (PREFER_SYSTEM_LIB=OFF, the default) on every OS:
+        # only a toolchain, git, cmake and OpenSSL are required.
         if [ "$RUNNER_OS" = "Linux" ]; then
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake git libssl-dev libsrtp2-dev
-          SYSTEM_LIBS=ON
+            build-essential cmake git libssl-dev
         else
           command -v cmake >/dev/null || brew install cmake
           brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
           export OPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
-          SYSTEM_LIBS=OFF
         fi
         git clone --depth 1 --recurse-submodules --branch v0.24.6 \
           https://github.com/paullouisageneau/libdatachannel.git \
@@ -36,8 +36,7 @@ jobs:
           -B "$RUNNER_TEMP/libdatachannel/build" \
           -DCMAKE_BUILD_TYPE=Release \
           -DUSE_GTEST=OFF \
-          -DBUILD_SHARED_LIBS=ON \
-          -DPREFER_SYSTEM_LIB="$SYSTEM_LIBS"
+          -DBUILD_SHARED_LIBS=ON
         cmake --build "$RUNNER_TEMP/libdatachannel/build" --parallel
         sudo cmake --install "$RUNNER_TEMP/libdatachannel/build"
 
@@ -53,16 +52,16 @@ jobs:
 
       - name: Build and install libdatachannel
         run: |
+          # Submodule mode (PREFER_SYSTEM_LIB=OFF, the default) on every OS:
+          # only a toolchain, git, cmake and OpenSSL are required.
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends \
-              build-essential cmake git libssl-dev libsrtp2-dev
-            SYSTEM_LIBS=ON
+              build-essential cmake git libssl-dev
           else
             command -v cmake >/dev/null || brew install cmake
             brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
             export OPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
-            SYSTEM_LIBS=OFF
           fi
           git clone --depth 1 --recurse-submodules --branch v0.24.6 \
             https://github.com/paullouisageneau/libdatachannel.git \
@@ -71,8 +70,7 @@ jobs:
             -B "$RUNNER_TEMP/libdatachannel/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DUSE_GTEST=OFF \
-            -DBUILD_SHARED_LIBS=ON \
-            -DPREFER_SYSTEM_LIB="$SYSTEM_LIBS"
+            -DBUILD_SHARED_LIBS=ON
           cmake --build "$RUNNER_TEMP/libdatachannel/build" --parallel
           sudo cmake --install "$RUNNER_TEMP/libdatachannel/build"
 
