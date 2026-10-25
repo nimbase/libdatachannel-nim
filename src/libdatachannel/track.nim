@@ -1,19 +1,15 @@
-## High-level Track API: packetizers, depacketizers and frame delivery.
+## High-level Track API: packetizers and media delivery.
+##
+## Receiving works through the regular `onMessage` callback inherited from
+## `RtcChannel`: libdatachannel v0.24.x exposes no depacketizer or frame
+## callback through its C API, so incoming media arrives as raw payloads.
 ##
 
+import std/strutils
 import ./bindings, ./utils, ./channel
 
 type
   TrackId* = ChannelId
-
-  FrameInfo* = object
-    ## Metadata delivered alongside a media frame.
-    timestamp*: uint32
-      ## RTP timestamp of the frame.
-    payloadType*: uint8
-      ## RTP payload type the frame was sent with.
-    timestampSeconds*: float
-      ## Capture time in seconds, negative when not available.
 
   PacketizerInit* = object
     ## Parameters of a media packetizer.
@@ -48,8 +44,7 @@ type
     cname*: string
       ## The CNAME handed to the packetizer. libdatachannel rejects an empty
       ## one, so this falls back to `defaultPacketizerCname`.
-    onFrame*: proc (data: string; info: FrameInfo) {.closure.}
-      ## Called for every incoming media frame.
+      ## Unused for VP8/VP9, which have no packetizer setter upstream.
 
 const
   defaultPacketizerCname* = "libdatachannel"
@@ -147,34 +142,6 @@ proc requestBitrate*(tr: Track; bitrate: int) =
   check rtcRequestBitrate(tr.id, cuint(max(bitrate, 0)))
 
 #
-#  Receiving media
-#
-
-proc frameTrampoline(tr: cint; data: cstring; size: cint;
-                     info: ptr rtcFrameInfo; usePtr: pointer) {.cdecl.} =
-  runInCallback:
-    if usePtr.isNil: return
-    let obj = cast[Track](usePtr)
-    if obj.isNil or obj.onFrame.isNil: return
-    var frameInfo = FrameInfo(timestampSeconds: -1.0)
-    if info != nil:
-      frameInfo = FrameInfo(timestamp: info.timestamp,
-        payloadType: info.payloadType,
-        timestampSeconds: info.timestampSeconds)
-    obj.onFrame(toNimBytes(data, size), frameInfo)
-
-proc setOnFrame*(tr: Track; callback: proc (data: string;
-                    info: FrameInfo) {.closure.}) =
-  ## Install the frame callback. Pass `nil` to remove it.
-  tr.onFrame = callback
-  if tr.id < 0: return
-  check rtcSetFrameCallback(tr.id, if callback.isNil: nil else: frameTrampoline)
-
-proc onFrame*(tr: Track; body: proc (data: string; info: FrameInfo) {.closure.}) =
-  ## `do` notation: `tr.onFrame() do (data, info): ...`
-  tr.setOnFrame(body)
-
-#
 #  Timestamps
 #
 
@@ -206,19 +173,12 @@ proc lastSenderReportTimestamp*(tr: Track): uint32 =
   check rtcGetLastTrackSenderReportTimestamp(tr.id, addr ts)
   ts
 
-proc rtcpSyncTimestamps*(tr: Track): tuple[rtpTimestamp, ntpTimestamp: uint64] =
-  ## The last synchronised RTP and NTP timestamps of the RTCP session.
-  ## Raises when no `RtcpReceivingSession` is chained.
-  var rtpTs, ntpTs: uint64
-  check rtcGetTrackRtcpSyncTimestamps(tr.id, addr rtpTs, addr ntpTs)
-  (rtpTimestamp: rtpTs, ntpTimestamp: ntpTs)
-
 #
 #  Chained handlers
 #
 
 proc chainRtcpReceivingSession*(tr: Track) =
-  ## Chain an RTCP receiving session, required by `rtcpSyncTimestamps`.
+  ## Chain an RTCP receiving session on the track.
   check rtcChainRtcpReceivingSession(tr.id)
 
 proc chainRtcpSrReporter*(tr: Track) =
@@ -238,11 +198,6 @@ proc chainRembHandler*(tr: Track; callback: rtcRembHandlerCallbackFunc) =
   ## Chain a handler reacting to the receiver estimated maximum bitrate.
   check rtcChainRembHandler(tr.id, callback)
 
-proc chainPacingHandler*(tr: Track; bitsPerSecond: float;
-                         sendIntervalMs: int) =
-  ## Chain a pacing handler to smooth outgoing frames.
-  check rtcChainPacingHandler(tr.id, bitsPerSecond, cint(sendIntervalMs))
-
 #
 #  Packetizers
 #
@@ -261,16 +216,6 @@ proc setAV1Packetizer*(tr: Track, init: PacketizerInit = PacketizerInit()) =
   ## Set the AV1 packetizer on the track.
   withPacketizerInit(tr, init):
     check rtcSetAV1Packetizer(tr.id, addr rtcInit)
-
-proc setVP8Packetizer*(tr: Track, init: PacketizerInit = PacketizerInit()) =
-  ## Set the VP8 packetizer on the track.
-  withPacketizerInit(tr, init):
-    check rtcSetVP8Packetizer(tr.id, addr rtcInit)
-
-proc setVP9Packetizer*(tr: Track, init: PacketizerInit = PacketizerInit()) =
-  ## Set the VP9 packetizer on the track.
-  withPacketizerInit(tr, init):
-    check rtcSetVP9Packetizer(tr.id, addr rtcInit)
 
 proc setOpusPacketizer*(tr: Track, init: PacketizerInit = PacketizerInit()) =
   ## Set the Opus packetizer on the track.
@@ -297,53 +242,6 @@ proc setG722Packetizer*(tr: Track, init: PacketizerInit = PacketizerInit()) =
   withPacketizerInit(tr, init):
     check rtcSetG722Packetizer(tr.id, addr rtcInit)
 
-#
-#  Depacketizers
-#
-
-proc setH264Depacketizer*(tr: Track,
-    nalSeparator = RTC_NAL_SEPARATOR_START_SEQUENCE) =
-  ## Set the H264 depacketizer on the track.
-  check rtcSetH264Depacketizer(tr.id, nalSeparator)
-
-proc setH265Depacketizer*(tr: Track,
-    nalSeparator = RTC_NAL_SEPARATOR_START_SEQUENCE) =
-  ## Set the H265 depacketizer on the track.
-  check rtcSetH265Depacketizer(tr.id, nalSeparator)
-
-proc setAV1Depacketizer*(tr: Track,
-    obuPacketization = RTC_OBU_PACKETIZED_TEMPORAL_UNIT) =
-  ## Set the AV1 depacketizer on the track.
-  check rtcSetAV1Depacketizer(tr.id, obuPacketization)
-
-proc setVP8Depacketizer*(tr: Track) =
-  ## Set the VP8 depacketizer on the track.
-  check rtcSetVP8Depacketizer(tr.id)
-
-proc setVP9Depacketizer*(tr: Track) =
-  ## Set the VP9 depacketizer on the track.
-  check rtcSetVP9Depacketizer(tr.id)
-
-proc setOpusDepacketizer*(tr: Track) =
-  ## Set the Opus depacketizer on the track.
-  check rtcSetOpusDepacketizer(tr.id)
-
-proc setAACDepacketizer*(tr: Track) =
-  ## Set the AAC depacketizer on the track.
-  check rtcSetAACDepacketizer(tr.id)
-
-proc setPCMUDepacketizer*(tr: Track) =
-  ## Set the PCMU depacketizer on the track.
-  check rtcSetPCMUDepacketizer(tr.id)
-
-proc setPCMADepacketizer*(tr: Track) =
-  ## Set the PCMA depacketizer on the track.
-  check rtcSetPCMADepacketizer(tr.id)
-
-proc setG722Depacketizer*(tr: Track) =
-  ## Set the G722 depacketizer on the track.
-  check rtcSetG722Depacketizer(tr.id)
-
 proc setNeedsToSendRtcpSr*(tr: Track) =
   ## Force the sender reporter to emit an RTCP sender report.
   ## Deprecated in the C API, kept for completeness.
@@ -355,8 +253,26 @@ proc setNeedsToSendRtcpSr*(tr: Track) =
 
 proc payloadTypesForCodec*(sdp: string; codec: string): seq[int] =
   ## All RTP payload types for `codec` present in `sdp`.
-  getCInts(proc (buffer: ptr cint; size: cint): cint =
-    rtcGetPayloadTypesForCodec(cstring(sdp), cstring(codec), buffer, size))
+  ##
+  ## Parsed from the `a=rtpmap:` lines of `sdp`: the C API only maps codecs
+  ## per track (`rtcGetTrackPayloadTypesForCodec`), not per SDP string.
+  result = @[]
+  let wanted = codec.toLowerAscii()
+  const prefix = "a=rtpmap:"
+  for rawLine in sdp.splitLines():
+    let line = rawLine.strip()
+    if not line.startsWith(prefix): continue
+    let rest = line[prefix.len .. ^1]
+    let spaceIdx = rest.find(' ')
+    if spaceIdx <= 0: continue
+    var pt = -1
+    try:
+      pt = parseInt(rest[0 ..< spaceIdx])
+    except ValueError:
+      continue
+    let encoding = rest[spaceIdx + 1 .. ^1].split('/')[0].strip().toLowerAscii()
+    if pt >= 0 and encoding == wanted:
+      result.add pt
 
 proc ssrcsForType*(mediaType: string; sdp: string): seq[uint32] =
   ## All SSRCs for `mediaType` ("audio" or "video") present in `sdp`.

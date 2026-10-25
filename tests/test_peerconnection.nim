@@ -240,21 +240,21 @@ suite "track":
     track.chainRtcpSrReporter()
     track.chainRtcpNackResponder()
 
-  test "media frames reach the remote depacketizer":
+  test "media packets reach the remote track":
     var received = ""
-    var frameInfo = FrameInfo()
+    var receivedBinary = false
     var outgoing: Track
     var pair = connectPair(proc (a, b: PeerConnection) =
       # Tracks have to exist before the offer is created for the media section
-      # to be negotiated at all. Only `a` sends, `b` receives on the track
-      # libdatachannel announces through `onTrack`.
-      outgoing = a.addTrack(RTC_CODEC_VP8,
-        PacketizerInit(clockRate: 90000, payloadType: 96))
+      # to be negotiated at all. Opus has a packetizer, so frames go out as
+      # RTP packets. The C API offers no depacketizer, so they arrive as-is
+      # on the regular message callback.
+      outgoing = a.addTrack(RTC_CODEC_OPUS,
+        PacketizerInit(clockRate: 48000, payloadType: 111))
       b.onTrack = proc(remote: Track) =
-        remote.setVP8Depacketizer()
-        remote.setOnFrame(proc(data: string; info: FrameInfo) =
+        remote.onMessage = proc(data: string; isBinary: bool) =
           received = data
-          frameInfo = info))
+          receivedBinary = isBinary)
     defer: pair.dc.close()
     defer: pair.b.close()
     defer: pair.a.close()
@@ -262,19 +262,31 @@ suite "track":
 
     check waitFor(proc(): bool = pair.b.state == RTC_CONNECTED)
     check waitFor(proc(): bool = pair.a.state == RTC_CONNECTED)
+    check waitFor(proc(): bool = outgoing.isOpen)
 
-    # Two frames, so the RTP timestamp has a chance to advance.
-    check outgoing.send("\x00" & repeat("\x01", 40)) == RTC_ERR_SUCCESS
+    template checkRtp(packet, payload: string) =
+      # One small frame fits a single RTP packet: a 12 byte header with
+      # version 2 and our payload type, followed by the payload verbatim.
+      check packet.len == 12 + payload.len
+      check packet[0] == '\x80'
+      check (ord(packet[1]) and 0x7F) == 111
+      check packet[12 .. ^1] == payload
+
+    let first = repeat("\x01", 40)
+    check outgoing.send(first) == RTC_ERR_SUCCESS
     check waitFor(proc(): bool = received.len > 0)
-    check received.len > 0
-    check frameInfo.payloadType == 96
+    check receivedBinary
+    checkRtp(received, first)
+
     # The packetizer does not advance the RTP timestamp on its own, the
     # application drives it.
-    outgoing.setRtpTimestamp(90000)
-    check outgoing.send("\x00" & repeat("\x02", 40)) == RTC_ERR_SUCCESS
-    check waitFor(proc(): bool = frameInfo.timestamp == 90000'u32)
-    check outgoing.currentTimestamp() == 90000'u32
-    check outgoing.timestampToSeconds(90000'u32) > 0.0
+    outgoing.setRtpTimestamp(48000)
+    check outgoing.currentTimestamp() == 48000'u32
+    let second = repeat("\x02", 40)
+    check outgoing.send(second) == RTC_ERR_SUCCESS
+    check waitFor(proc(): bool = received.len > 0 and
+      received[12 .. ^1] == second)
+    checkRtp(received, second)
 
   test "SDP helpers work on a real description":
     var pair = connectPair(proc (a, b: PeerConnection) =

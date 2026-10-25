@@ -155,15 +155,6 @@ type
   rtcRembHandlerCallbackFunc* = proc (tr: cint; bitrate: cuint;
                                       usePtr: pointer) {.cdecl.}
 
-  rtcFrameInfo* {.bycopy.} = object
-    timestamp*: uint32
-    payloadType*: uint8
-    timestampSeconds*: cdouble ## negative means not available
-
-  rtcFrameCallbackFunc* = proc (tr: cint; data: cstring; size: cint;
-                                info: ptr rtcFrameInfo;
-                                usePtr: pointer) {.cdecl.}
-
   rtcWebSocketClientCallbackFunc* = proc (wsserver: cint; ws: cint;
                                           usePtr: pointer) {.cdecl.}
 
@@ -194,10 +185,6 @@ type
     maxMessageSize*: cint ## <= 0 means default
     disableFingerprintVerification*: bool
 
-  rtcLocalDescriptionInit* {.bycopy.} = object
-    iceUfrag*: cstring
-    icePwd*: cstring
-
 {.push importc, dynlib: libdatachannel_dll.}
 
 proc rtcCreatePeerConnection*(config: ptr rtcConfiguration): cint
@@ -218,8 +205,6 @@ proc rtcSetSignalingStateChangeCallback*(pc: cint;
 
 proc rtcSetLocalDescription*(pc: cint; `type`: cstring): cint
   ## `type` may be NULL
-proc rtcSetLocalDescriptionEx*(pc: cint; `type`: cstring;
-    init: ptr rtcLocalDescriptionInit): cint
 proc rtcSetRemoteDescription*(pc: cint; sdp: cstring; `type`: cstring): cint
 proc rtcAddRemoteCandidate*(pc: cint; cand: cstring; mid: cstring): cint
 
@@ -342,7 +327,6 @@ proc rtcGetTrackDirection*(tr: cint; direction: ptr rtcDirection): cint
 
 proc rtcRequestKeyframe*(tr: cint): cint
 proc rtcRequestBitrate*(tr: cint; bitrate: cuint): cint
-proc rtcSetFrameCallback*(tr: cint; cb: rtcFrameCallbackFunc): cint
 
 {.pop.}
 
@@ -411,32 +395,21 @@ proc rtcSetMediaInterceptorCallback*(id: cint;
                                      cb: rtcInterceptorCallbackFunc): cint
   ## Set a MediaInterceptor on the peer connection.
 
-# Set a packetizer on a track
+# Set a packetizer on a track. Upstream v0.24.x only provides these eight;
+# VP8 and VP9 have no packetizer setter and are sent as raw payloads.
 proc rtcSetH264Packetizer*(tr: cint; init: ptr rtcPacketizerInit): cint
 proc rtcSetH265Packetizer*(tr: cint; init: ptr rtcPacketizerInit): cint
 proc rtcSetAV1Packetizer*(tr: cint; init: ptr rtcPacketizerInit): cint
-proc rtcSetVP8Packetizer*(tr: cint; init: ptr rtcPacketizerInit): cint
-proc rtcSetVP9Packetizer*(tr: cint; init: ptr rtcPacketizerInit): cint
 proc rtcSetOpusPacketizer*(tr: cint; init: ptr rtcPacketizerInit): cint
 proc rtcSetAACPacketizer*(tr: cint; init: ptr rtcPacketizerInit): cint
 proc rtcSetPCMUPacketizer*(tr: cint; init: ptr rtcPacketizerInit): cint
 proc rtcSetPCMAPacketizer*(tr: cint; init: ptr rtcPacketizerInit): cint
 proc rtcSetG722Packetizer*(tr: cint; init: ptr rtcPacketizerInit): cint
 
-# Set a depacketizer on a track
-proc rtcSetH264Depacketizer*(tr: cint;
-                              nalSeparator: rtcNalUnitSeparator): cint
-proc rtcSetH265Depacketizer*(tr: cint;
-                              nalSeparator: rtcNalUnitSeparator): cint
-proc rtcSetVP8Depacketizer*(tr: cint): cint
-proc rtcSetVP9Depacketizer*(tr: cint): cint
-proc rtcSetAV1Depacketizer*(tr: cint;
-                            obuPacketization: rtcObuPacketization): cint
-proc rtcSetOpusDepacketizer*(tr: cint): cint
-proc rtcSetAACDepacketizer*(tr: cint): cint
-proc rtcSetPCMUDepacketizer*(tr: cint): cint
-proc rtcSetPCMADepacketizer*(tr: cint): cint
-proc rtcSetG722Depacketizer*(tr: cint): cint
+# NOTE: the C API of libdatachannel v0.24.x provides no depacketizer setters
+# and no frame callback. Incoming media arrives depacketized only through the
+# C++ API; through this C API it arrives as raw payloads on the regular
+# message callback (`rtcSetMessageCallback`).
 
 # Chain handlers on a track
 proc rtcChainRtcpReceivingSession*(tr: cint): cint
@@ -445,8 +418,6 @@ proc rtcChainRtcpNackResponder*(tr: cint;
                                  maxStoredPacketsCount: cuint): cint
 proc rtcChainPliHandler*(tr: cint; cb: rtcPliHandlerCallbackFunc): cint
 proc rtcChainRembHandler*(tr: cint; cb: rtcRembHandlerCallbackFunc): cint
-proc rtcChainPacingHandler*(tr: cint; bitsPerSecond: cdouble;
-                            sendIntervalMs: cint): cint
 
 # Timestamps
 proc rtcTransformSecondsToTimestamp*(id: cint; seconds: cdouble;
@@ -457,8 +428,6 @@ proc rtcGetCurrentTrackTimestamp*(id: cint; timestamp: ptr uint32): cint
 proc rtcSetTrackRtpTimestamp*(id: cint; timestamp: uint32): cint
 proc rtcGetLastTrackSenderReportTimestamp*(id: cint;
     timestamp: ptr uint32): cint
-proc rtcGetTrackRtcpSyncTimestamps*(tr: cint; rtpTimestamp,
-                                    ntpTimestamp: ptr uint64): cint
 
 # SDP / RTP introspection helpers
 proc rtcGetTrackPayloadTypesForCodec*(tr: cint; ccodec: cstring;
@@ -466,8 +435,6 @@ proc rtcGetTrackPayloadTypesForCodec*(tr: cint; ccodec: cstring;
 proc rtcGetSsrcsForTrack*(tr: cint; buffer: ptr uint32; count: cint): cint
 proc rtcGetCNameForSsrc*(tr: cint; ssrc: uint32; cname: cstring;
                          cnameSize: cint): cint
-proc rtcGetPayloadTypesForCodec*(sdp: cstring; ccodec: cstring;
-                                 buffer: ptr cint; size: cint): cint
 proc rtcGetSsrcsForType*(mediaType: cstring; sdp: cstring;
                          buffer: ptr uint32; bufferSize: cint): cint
 proc rtcSetSsrcForType*(mediaType: cstring; sdp: cstring; buffer: cstring;

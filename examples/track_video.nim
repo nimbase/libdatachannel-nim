@@ -1,11 +1,15 @@
 ## A WebRTC media track demo: two PeerConnections in one process, one sends
-## VP8 video frames, the other depacketizes them.
+## H264 video payloads, the other receives them.
 ##
 ##     nim c -r --path:src examples/track_video.nim
 ##
-## The "video" is a synthetic pattern packed the way VP8 expects it: a VP8
-## key frame header followed by payload bytes. Swap `makeFrame` for real
-## encoded frames coming out of a camera or a decoder to move actual media.
+## The "video" is a synthetic pattern. Swap `makeFrame` for real encoded
+## frames coming out of a camera or a decoder to move actual media.
+##
+## Note: the C API of libdatachannel v0.24.x provides no depacketizer or
+## frame callback, so payloads arrive as RTP packets on the regular
+## `onMessage` handler. Codecs without a packetizer setter (VP8/VP9) can
+## only send raw RTP packets built by the application.
 ##
 
 import std/[os, strutils, times]
@@ -14,7 +18,7 @@ import libdatachannel
 const
   IceServers = @["stun:stun.l.google.com:19302"]
   ClockRate = 90000'u32
-  PayloadType = 96
+  PayloadType = 102
   FrameRate = 30
 
 proc waitUntil(condition: proc (): bool; timeoutMs = 30000): bool =
@@ -25,16 +29,9 @@ proc waitUntil(condition: proc (): bool; timeoutMs = 30000): bool =
   false
 
 proc makeFrame(seq: int): string =
-  ## A stand-in for one encoded VP8 frame.
-  ##
-  ## The first byte is a VP8 key frame header (0x10), the next three bytes are
-  ## the 14-bit start code 9, then arbitrary payload bytes.
+  ## A stand-in for one encoded H264 frame: arbitrary payload bytes.
   result = newStringOfCap(40)
-  result.add(char(0x10))
-  result.add(char(0x9d))
-  result.add(char(0x01))
-  result.add(char(0x2a))
-  for i in 0 ..< 32:
+  for i in 0 ..< 36:
     result.add chr((seq + i) and 0xff)
 
 proc main() =
@@ -60,16 +57,13 @@ proc main() =
   var bytes = 0
   receiver.onTrack = proc(track: Track) =
     echo "[receiver] track '", track.id, "', direction ", track.direction()
-    # Incoming media is depacketized into frames only once a depacketizer is
-    # installed; `onFrame` alone would never fire.
-    track.setVP8Depacketizer()
-    track.setOnFrame(proc(data: string; info: FrameInfo) =
+    # Incoming media arrives as raw payloads on the message callback; the C
+    # API has no depacketizer or frame callback to reassemble frames.
+    track.onMessage = proc(data: string; isBinary: bool) =
       inc frames
       bytes += data.len
       if frames mod FrameRate == 0:
-        echo "[receiver] ", frames, " frames, ", bytes, " bytes, ",
-             "payload type ", info.payloadType,
-             ", timestamp ", info.timestamp)
+        echo "[receiver] ", frames, " payloads, ", bytes, " bytes"
 
     # Only `chainRtcpReceivingSession` works on a receiving track: the
     # sender reporter needs an RTP configuration, which only the packetizer on
@@ -78,8 +72,9 @@ proc main() =
 
   # --- sending side ---------------------------------------------------------
   # The track has to exist before the offer is created, otherwise the media
-  # section is missing from the SDP entirely.
-  let track = sender.addTrack(RTC_CODEC_VP8,
+  # section is missing from the SDP entirely. H264 has a packetizer, so
+  # frames go out as RTP packets with a drivable timestamp.
+  let track = sender.addTrack(RTC_CODEC_H264,
     PacketizerInit(clockRate: ClockRate, payloadType: PayloadType))
   defer: track.close()
 
@@ -92,7 +87,7 @@ proc main() =
   var frameIndex = 0
   while true:
     # The packetizer does not advance the RTP timestamp on its own, so drive
-    # it: 90kHz for VP8 means one tick is 1/90 s.
+    # it: 90kHz video means one tick is 1/90 s.
     let timestamp = uint32(frameIndex) * ClockRate div uint32(FrameRate)
     track.setRtpTimestamp(timestamp)
     if track.send(makeFrame(frameIndex)) < 0:

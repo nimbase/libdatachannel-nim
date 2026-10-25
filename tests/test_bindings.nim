@@ -164,7 +164,7 @@ suite "ABI layout":
     check offsetOf(rtcDataChannelInit, manualStream) == 25
     check offsetOf(rtcDataChannelInit, stream) == 26
 
-  test "rtcTrackInit and rtcLocalDescriptionInit":
+  test "rtcTrackInit":
     check sizeof(rtcTrackInit) == 56
     check offsetOf(rtcTrackInit, direction) == 0
     check offsetOf(rtcTrackInit, codec) == 4
@@ -175,13 +175,8 @@ suite "ABI layout":
     check offsetOf(rtcTrackInit, msid) == 32
     check offsetOf(rtcTrackInit, trackId) == 40
     check offsetOf(rtcTrackInit, profile) == 48
-    check sizeof(rtcLocalDescriptionInit) == 16
 
-  test "rtcFrameInfo and rtcPacketizerInit":
-    check sizeof(rtcFrameInfo) == 16
-    check offsetOf(rtcFrameInfo, timestamp) == 0
-    check offsetOf(rtcFrameInfo, payloadType) == 4
-    check offsetOf(rtcFrameInfo, timestampSeconds) == 8
+  test "rtcPacketizerInit":
     check sizeof(rtcPacketizerInit) == 64
     check offsetOf(rtcPacketizerInit, ssrc) == 0
     check offsetOf(rtcPacketizerInit, cname) == 8

@@ -342,13 +342,6 @@ proc setLocalDescription*(pc: PeerConnection; kind: SdpType) =
   ## Produce the local description with an explicit `sdpOffer` or `sdpAnswer`.
   pc.setLocalDescription(some(kind))
 
-proc setLocalDescription*(pc: PeerConnection; iceUfrag, icePwd: string) =
-  ## Produce the local description with fixed ICE credentials.
-  var ufrag = cstring(iceUfrag)
-  var pwd = cstring(icePwd)
-  var init = rtcLocalDescriptionInit(iceUfrag: ufrag, icePwd: pwd)
-  check rtcSetLocalDescriptionEx(pc.id, nil, addr init)
-
 proc setRemoteDescription*(pc: PeerConnection; sdp: string;
                            kind: SdpType = sdpOffer) =
   ## Apply a description received from the remote peer.
@@ -430,6 +423,8 @@ proc addTrack*(pc: PeerConnection; init: rtcTrackInit): Track =
 proc addTrack*(pc: PeerConnection; codec: rtcCodec;
                init: PacketizerInit = PacketizerInit()): Track =
   ## Add a media track for `codec` and install the matching packetizer.
+  ## VP8 and VP9 have no packetizer setter in the C API, so those tracks
+  ## send raw payloads and the receiver reads them through `onMessage`.
   var trackInit = rtcTrackInit(
     direction: RTC_DIRECTION_SENDRECV,
     codec: codec,
@@ -444,13 +439,14 @@ proc addTrack*(pc: PeerConnection; codec: rtcCodec;
   of RTC_CODEC_H264: result.setH264Packetizer(init)
   of RTC_CODEC_H265: result.setH265Packetizer(init)
   of RTC_CODEC_AV1: result.setAV1Packetizer(init)
-  of RTC_CODEC_VP8: result.setVP8Packetizer(init)
-  of RTC_CODEC_VP9: result.setVP9Packetizer(init)
   of RTC_CODEC_OPUS: result.setOpusPacketizer(init)
   of RTC_CODEC_AAC: result.setAACPacketizer(init)
   of RTC_CODEC_PCMU: result.setPCMUPacketizer(init)
   of RTC_CODEC_PCMA: result.setPCMAPacketizer(init)
   of RTC_CODEC_G722: result.setG722Packetizer(init)
+  of RTC_CODEC_VP8, RTC_CODEC_VP9:
+    # No packetizer setter upstream; the track sends raw payloads.
+    discard
 
 proc addTrack*(pc: PeerConnection; mediaDescriptionSdp: string): Track =
   ## Add a media track described by a raw SDP media section.

@@ -241,23 +241,19 @@ nim c -r examples/track_video.nim
 ```nim
 # --- receiving side --------------------------------------------------------
 receiver.onTrack = proc(track: Track) =
-  # Incoming media is depacketized into frames only once a depacketizer is
-  # installed; `onFrame` alone would never fire.
-  track.setVP8Depacketizer()
-  track.setOnFrame(proc(data: string; info: FrameInfo) =
-    echo "frame of ", data.len, " bytes, payload type ", info.payloadType,
-         ", timestamp ", info.timestamp)
+  # Incoming media arrives as raw payloads on the message callback; the C
+  # API has no depacketizer or frame callback to reassemble frames.
+  track.onMessage = proc(data: string; isBinary: bool) =
+    echo "payload of ", data.len, " bytes"
   track.chainRtcpReceivingSession()
 
 # --- sending side ----------------------------------------------------------
 # The track has to exist before the offer is created, otherwise the media
-# section is missing from the SDP entirely.
-let track = sender.addTrack(RTC_CODEC_VP8,
-  PacketizerInit(clockRate: 90000, payloadType: 96))
+# section is missing from the SDP entirely. H264 has a packetizer, so
+# frames go out as RTP packets with a drivable timestamp.
+let track = sender.addTrack(RTC_CODEC_H264,
+  PacketizerInit(clockRate: 90000, payloadType: 102))
 sender.setLocalDescription()
-
-# The packetizer does not advance the RTP timestamp on its own, so drive it.
-track.setRtpTimestamp(90000)
 track.send(frame)
 ```
 
@@ -324,11 +320,12 @@ dc.close()
 ### `Track`
 
 ```nim
-let track = pc.addTrack(RTC_CODEC_VP8,
-  PacketizerInit(clockRate: 90000, payloadType: 96, cname: "camera"))
+let track = pc.addTrack(RTC_CODEC_OPUS,
+  PacketizerInit(clockRate: 48000, payloadType: 111, cname: "mic"))
 
-track.setVP8Depacketizer()    # or H264/H265/AV1/Opus/AAC/PCMU/PCMA/G722
-track.setOnFrame(proc(data: string; info: FrameInfo) = discard)
+# Packetizer setters exist for H264/H265/AV1/Opus/AAC/PCMU/PCMA/G722 only;
+# VP8/VP9 tracks send raw payloads, read back through `onMessage`.
+track.onMessage = proc(data: string; isBinary: bool) = discard
 
 track.send(frame)
 track.setRtpTimestamp(90000)
@@ -336,14 +333,13 @@ track.requestKeyframe()
 track.requestBitrate(500_000)
 
 track.description(); track.mid(); track.direction()
-track.ssrcs(); track.payloadTypesForCodec("VP8"); track.cName(ssrc)
+track.ssrcs(); track.payloadTypesForCodec("opus"); track.cName(ssrc)
 track.secondsToTimestamp(0.020); track.timestampToSeconds(timestamp)
 track.chainRtcpReceivingSession()
 track.chainRtcpSrReporter()
 track.chainRtcpNackResponder()
 track.chainPliHandler(callback)
 track.chainRembHandler(callback)
-track.chainPacingHandler(bitsPerSecond = 1_000_000, sendIntervalMs = 20)
 ```
 
 ### `WebSocketServer` / `WebSocketClient`
