@@ -1,44 +1,10 @@
 name: docs
 on:
   push:
-    paths-ignore:
-      - '**.md'
-      - LICENSE
-      - README.*
-      - examples
-    tags:
-      - '*.*.*'
-    branches:
-      - main
-env:
-  nim-version: 'stable'
-  repo_alias: libdatachannel
-  deploy-dir: .gh-pages
+    tags: ['*.*.*']
+  workflow_dispatch:
 jobs:
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: jiro4989/setup-nim-action@v1
-        with:
-          nim-version: ${{ env.nim-version }}
-      - run: nimble install -Y
-      - run: nim doc --index:on --project --path:. --out:${{ env.deploy-dir }} src/${{ env.repo_alias }}.nim
-      
-      - name: "Rename to index.html"
-        run: mv ${{ env.deploy-dir }}/${{ env.repo_alias }}.html ${{ env.deploy-dir }}/index.html 
-      
-      - name: "Find and replace (index.html)"
-        run: sed -i 's/${{ env.repo_alias }}.html/index.html/g' ${{ env.deploy-dir }}/index.html
-      
-      # - name: "Find and replace (idx)"
-      #   run: sed -i 's/${{ github.event.repository.name }}.html/index.html/g' ${{ env.deploy-dir }}/${{ github.event.repository.name }}.idx
-        
-      - name: "Find and replace (theindex.html)"
-        run: sed -i 's/${{ env.repo_alias }}.html/index.html/g' ${{ env.deploy-dir }}/theindex.html
-        
-      - name: Deploy documents
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ${{ env.deploy-dir }}
+  release:
+    permissions:
+      contents: write
+    uses: nimbase/setup-nim-action/.github/workflows/docs.yml@main
